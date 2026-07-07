@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>KHAOS — Agent Supervisor</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+      background: #0a0a0a;
+      color: #e0e0e0;
+      min-height: 100vh;
+    }
+    .header {
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+      border-bottom: 1px solid #333;
+      padding: 20px 30px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .header h1 {
+      font-size: 24px;
+      font-weight: 700;
+      background: linear-gradient(90deg, #ff6b6b, #feca57, #48dbfb);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .header .status {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 14px;
+    }
+    .status-dot {
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      background: #00ff88;
+      animation: pulse 2s infinite;
+    }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.5} }
+    .main {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+      padding: 20px 30px;
+    }
+    .card {
+      background: #111;
+      border: 1px solid #222;
+      border-radius: 8px;
+      padding: 20px;
+    }
+    .card h2 {
+      font-size: 16px;
+      color: #888;
+      margin-bottom: 15px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+    .agent-list { list-style: none; }
+    .agent-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 0;
+      border-bottom: 1px solid #1a1a1a;
+    }
+    .agent-item:last-child { border-bottom: none; }
+    .agent-name { font-weight: 600; color: #fff; }
+    .agent-pid { color: #666; font-size: 12px; margin-left: 8px; }
+    .agent-state {
+      padding: 3px 10px;
+      border-radius: 12px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .state-running { background: #0a3d0a; color: #00ff88; }
+    .state-idle { background: #3d3d0a; color: #feca57; }
+    .state-blocked { background: #3d0a0a; color: #ff6b6b; }
+    .empty-state { color: #555; text-align: center; padding: 30px; font-style: italic; }
+    .sys-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 8px 0;
+      border-bottom: 1px solid #1a1a1a;
+    }
+    .sys-label { color: #888; }
+    .sys-value { color: #fff; font-weight: 600; }
+    .footer { text-align: center; padding: 20px; color: #444; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>&#9889; KHAOS</h1>
+    <div class="status">
+      <div class="status-dot" id="statusDot"></div>
+      <span id="statusText">Connecting...</span>
+    </div>
+  </div>
+  <div class="main">
+    <div class="card">
+      <h2>Active Agents</h2>
+      <ul class="agent-list" id="agentList">
+        <li class="empty-state">No agents detected</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h2>System</h2>
+      <div id="systemInfo"><p class="empty-state">Loading...</p></div>
+    </div>
+  </div>
+  <div class="footer">KHAOS — AI Agent Supervisor for Linux</div>
+  <script>
+    async function fetchStatus() {
+      try {
+        const resp = await fetch('/api/status');
+        const data = await resp.json();
+        document.getElementById('statusDot').style.background = '#00ff88';
+        document.getElementById('statusText').textContent = 'Connected';
+        const list = document.getElementById('agentList');
+        const sessions = data.agents || {};
+        if (Object.keys(sessions).length === 0) {
+          list.innerHTML = '<li class="empty-state">No agents detected</li>';
+        } else {
+          list.innerHTML = Object.entries(sessions).map(([k, s]) =>
+            `<li class="agent-item">
+              <div><span class="agent-name">${s.agent}</span><span class="agent-pid">PID ${s.pid}</span></div>
+              <span class="agent-state state-${s.state}">${s.state}</span>
+            </li>`
+          ).join('');
+        }
+        document.getElementById('systemInfo').innerHTML =
+          `<div class="sys-row"><span class="sys-label">Detectors</span><span class="sys-value">${data.detector_count || 0}</span></div>
+           <div class="sys-row"><span class="sys-label">Active agents</span><span class="sys-value">${Object.keys(sessions).length}</span></div>
+           <div class="sys-row"><span class="sys-label">Daemon</span><span class="sys-value">running</span></div>`;
+      } catch (e) {
+        document.getElementById('statusDot').style.background = '#ff6b6b';
+        document.getElementById('statusText').textContent = 'Disconnected';
+      }
+    }
+    fetchStatus();
+    setInterval(fetchStatus, 3000);
+  </script>
+</body>
+</html>

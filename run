@@ -1,0 +1,231 @@
+#!/bin/bash
+# KHAOS — AI Agent Supervisor for Linux
+# One-command setup: virtual desktop + Guacamole + agent monitoring
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# --- Load .env ---
+if [ ! -f "$SCRIPT_DIR/.env" ]; then
+  echo "Error: .env not found."
+  echo "  cp .env.example .env && nano .env"
+  exit 1
+fi
+set -a; source "$SCRIPT_DIR/.env"; set +a
+
+GUAC_PASSWORD="${GUAC_PASSWORD:-changeme}"
+VNC_PASSWORD="${VNC_PASSWORD:-changeme}"
+RESOLUTION="${SCREEN_RESOLUTION:-1920x1080}"
+DEPTH="${COLOR_DEPTH:-24}"
+RES_X="${RESOLUTION%x*}"
+RES_Y="${RESOLUTION#*x}"
+KHAOS_SOCKET="${KHAOS_SOCKET:-/tmp/khaos/khaos.sock}"
+MCP_PORT="${MCP_PORT:-18789}"
+DASHBOARD_PORT="${DASHBOARD_PORT:-8090}"
+LOG_LEVEL="${LOG_LEVEL:-INFO}"
+
+GUAC_VERSION="1.6.0"
+TOMCAT_VERSION="9"
+
+echo "╔══════════════════════════════════════╗"
+echo "║       KHAOS — Agent Supervisor       ║"
+echo "╚══════════════════════════════════════╝"
+echo ""
+
+# --- Create working dirs ---
+mkdir -p /tmp/khaos/{pids,logs,states}
+
+# --- Cleanup ---
+echo "[+] Cleaning up previous services..."
+pkill -9 -f "Xvfb :99" 2>/dev/null || true
+pkill -9 -f "fluxbox" 2>/dev/null || true
+pkill -9 -f "x11vnc" 2>/dev/null || true
+pkill -9 -f "khaos-daemon" 2>/dev/null || true
+pkill -9 -f "khaos-mcp" 2>/dev/null || true
+pkill -9 -f "khaos-api" 2>/dev/null || true
+for pid in $(pgrep -f "cloudflared.*khaos" 2>/dev/null); do kill -9 $pid 2>/dev/null; done
+rm -f /tmp/.X99-lock /tmp/.X11-unix/X99 2>/dev/null || true
+sleep 1
+
+# --- Packages ---
+echo "[1/7] Installing dependencies..."
+sudo apt-get update -qq
+DEBIAN_FRONTEND=noninteractive sudo apt-get install -y -qq \
+  build-essential libcairo2-dev libjpeg-turbo8-dev libpng-dev \
+  libtool-bin libossp-uuid-dev libavcodec-dev libavformat-dev \
+  libavutil-dev libswscale-dev freerdp2-dev libpango1.0-dev \
+  libssh2-1-dev libtelnet-dev libvncserver-dev libwebsockets-dev \
+  libpulse-dev libssl-dev libvorbis-dev libwebp-dev \
+  curl wget git unzip \
+  x11vnc xdg-utils xsel dbus-x11 xdotool wmctrl \
+  fonts-dejavu fonts-noto-cjk \
+  python3 python3-pip python3-venv \
+  2>&1 | tail -3
+
+if ! command -v java &>/dev/null; then
+  echo "  Installing Java..."
+  DEBIAN_FRONTEND=noninteractive sudo apt-get install -y -qq default-jdk 2>&1 | tail -2
+fi
+
+if [ ! -d "/var/lib/tomcat${TOMCAT_VERSION}" ]; then
+  echo "  Installing Tomcat ${TOMCAT_VERSION}..."
+  if ! apt-cache show tomcat9 &>/dev/null 2>&1; then
+    sudo add-apt-repository -y "deb http://archive.ubuntu.com/ubuntu jammy universe" 2>/dev/null || true
+    sudo apt-get update -qq
+  fi
+  DEBIAN_FRONTEND=noninteractive sudo apt-get install -y -qq tomcat9 tomcat9-admin 2>&1 | tail -2
+fi
+
+if ! command -v cloudflared &>/dev/null; then
+  echo "  Installing cloudflared..."
+  curl -sL "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64" -o /tmp/cloudflared
+  chmod +x /tmp/cloudflared
+  sudo mv /tmp/cloudflared /usr/local/bin/cloudflared
+fi
+
+# --- Build guacamole-server ---
+echo "[2/7] Building Guacamole..."
+if ! command -v guacd &>/dev/null; then
+  cd /tmp
+  if [ ! -d "guacamole-server-${GUAC_VERSION}" ]; then
+    wget -q "https://downloads.apache.org/guacamole/${GUAC_VERSION}/source/guacamole-server-${GUAC_VERSION}.tar.gz" -O guacamole-server.tar.gz
+    tar -xzf guacamole-server.tar.gz
+  fi
+  cd "guacamole-server-${GUAC_VERSION}"
+  ./configure --with-init-dir=/etc/init.d 2>&1 | tail -3
+  make -j$(nproc) 2>&1 | tail -2
+  sudo make install 2>&1 | tail -2
+  sudo ldconfig
+fi
+
+# --- Deploy guacamole-client ---
+echo "[3/7] Deploying Guacamole client..."
+GUAC_HOME="/etc/guacamole"
+sudo mkdir -p "${GUAC_HOME}"/{extensions,lib}
+
+if [ ! -f "${GUAC_HOME}/guacamole.war" ]; then
+  wget -q "https://downloads.apache.org/guacamole/${GUAC_VERSION}/binary/guacamole-${GUAC_VERSION}.war" \
+    -O "${GUAC_HOME}/guacamole.war"
+fi
+
+TOMCAT_WEBAPPS="/var/lib/tomcat${TOMCAT_VERSION}/webapps"
+sudo ln -sf "${GUAC_HOME}/guacamole.war" "${TOMCAT_WEBAPPS}/guacamole.war"
+sudo chown -R tomcat:tomcat "${TOMCAT_WEBAPPS}/guacamole"* 2>/dev/null || true
+
+# --- Configure Guacamole ---
+echo "[4/7] Configuring Guacamole..."
+sudo tee "${GUAC_HOME}/guacamole.properties" > /dev/null << EOF
+guacd-hostname: localhost
+guacd-port:     4822
+auth-provider:  guacauth
+EOF
+
+sudo tee "${GUAC_HOME}/user-mapping.xml" > /dev/null << EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<user-mapping>
+    <authorize username="khaos" password="${GUAC_PASSWORD}">
+        <connection name="KHAOS Desktop">
+            <protocol>vnc</protocol>
+            <param name="hostname">localhost</param>
+            <param name="port">5900</param>
+            <param name="password">${VNC_PASSWORD}</param>
+        </connection>
+    </authorize>
+</user-mapping>
+EOF
+
+if ! grep -q "GUACAMOLE_HOME" /etc/default/tomcat9 2>/dev/null; then
+  echo "GUACAMOLE_HOME=${GUAC_HOME}" | sudo tee -a /etc/default/tomcat9
+fi
+
+# --- VNC Password ---
+echo "[5/7] Setting up VNC..."
+mkdir -p "$HOME/.vnc"
+x11vnc -storepasswd "$VNC_PASSWORD" "$HOME/.vnc/passwd" 2>&1 | tail -1
+
+# --- Start infrastructure ---
+echo "[6/7] Starting infrastructure..."
+
+# guacd
+pkill -f guacd 2>/dev/null || true; sleep 1
+nohup /usr/local/sbin/guacd -f > /tmp/khaos/logs/guacd.log 2>&1 &
+echo $! > /tmp/khaos/pids/guacd.pid
+sleep 2
+
+# Tomcat
+export CATALINA_HOME="/usr/share/tomcat${TOMCAT_VERSION}"
+export CATALINA_BASE="/var/lib/tomcat${TOMCAT_VERSION}"
+sudo -E /usr/share/tomcat${TOMCAT_VERSION}/bin/catalina.sh start 2>/dev/null || true
+sleep 3
+
+# Xvfb
+Xvfb :99 -screen 0 "${RES_X}x${RES_Y}x${DEPTH}" -ac > /tmp/khaos/logs/xvfb.log 2>&1 &
+echo $! > /tmp/khaos/pids/xvfb.pid
+sleep 1
+
+# Fluxbox
+DISPLAY=:99 fluxbox > /tmp/khaos/logs/fluxbox.log 2>&1 &
+echo $! > /tmp/khaos/pids/fluxbox.pid
+sleep 2
+
+# x11vnc
+DISPLAY=:99 x11vnc -display :99 -forever -shared \
+  -rfbauth "$HOME/.vnc/passwd" -rfbport 5900 \
+  -noxdamage -noxrecord -noxfixes \
+  > /tmp/khaos/logs/x11vnc.log 2>&1 &
+echo $! > /tmp/khaos/pids/x11vnc.pid
+
+# --- Start KHAOS components ---
+echo "[7/7] Starting KHAOS..."
+cd "${SCRIPT_DIR}"
+python3 -m venv .venv 2>/dev/null || true
+. .venv/bin/activate
+pip install -q psutil 2>/dev/null || true
+
+# Dashboard API
+nohup python3 web/api.py \
+  --port "${DASHBOARD_PORT}" \
+  --socket "${KHAOS_SOCKET}" \
+  > /tmp/khaos/logs/api.log 2>&1 &
+echo $! > /tmp/khaos/pids/api.pid
+
+# Agent monitoring daemon
+nohup python3 -m core.daemon \
+  --socket "${KHAOS_SOCKET}" \
+  --log-level "${LOG_LEVEL}" \
+  > /tmp/khaos/logs/daemon.log 2>&1 &
+echo $! > /tmp/khaos/pids/daemon.pid
+
+# --- Cloudflare tunnel ---
+echo ""
+echo "Setting up Cloudflare tunnel..."
+TUNNEL_LOG="/tmp/khaos/logs/tunnel.log"
+truncate -s 0 "$TUNNEL_LOG" 2>/dev/null || true
+nohup cloudflared tunnel --no-autoupdate --url http://127.0.0.1:8080 \
+  > "$TUNNEL_LOG" 2>&1 &
+echo $! > /tmp/khaos/pids/tunnel.pid
+
+CF_URL=""
+for i in $(seq 1 15); do
+  CF_URL=$(grep -o 'https://[a-zA-Z0-9-]*\.trycloudflare\.com' "$TUNNEL_LOG" 2>/dev/null | tail -1)
+  [ -n "$CF_URL" ] && break
+  sleep 1
+done
+
+# --- Done ---
+echo ""
+echo "╔══════════════════════════════════════════════╗"
+echo "║          KHAOS is running!                   ║"
+echo "╠══════════════════════════════════════════════╣"
+if [ -n "$CF_URL" ]; then
+  echo "║  Public:  ${CF_URL}/guacamole"
+fi
+echo "║  Local:   http://localhost:8080/guacamole"
+echo "║  VNC:     vnc://localhost:5900"
+echo "║  Login:   khaos / ${GUAC_PASSWORD}"
+echo "║  Daemon:  unix:${KHAOS_SOCKET}"
+echo "╚══════════════════════════════════════════════╝"
+echo ""
+echo "Agents monitored: ${KHAOS_AGENTS:-claude,codex,opencode,gemini,cursor}"
+echo "Logs: /tmp/khaos/logs/"
+echo "Stop: ./stop"

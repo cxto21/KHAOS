@@ -1,0 +1,23 @@
+#!/bin/bash
+# KHAOS — Stop all services
+set -euo pipefail
+
+echo "Stopping KHAOS..."
+
+for svc in daemon api tunnel x11vnc fluxbox xvfb; do
+  if [ -f /tmp/khaos/pids/${svc}.pid ]; then
+    kill "$(cat /tmp/khaos/pids/${svc}.pid)" 2>/dev/null || true
+    rm -f /tmp/khaos/pids/${svc}.pid
+  fi
+done
+
+pkill -f "cloudflared.*khaos" 2>/dev/null || true
+
+TOMCAT_VERSION="9"
+sudo -E /usr/share/tomcat${TOMCAT_VERSION}/bin/catalina.sh stop 2>/dev/null || true
+pkill -f guacd 2>/dev/null || true
+
+rm -f /tmp/.X99-lock /tmp/.X11-unix/X99 2>/dev/null || true
+rm -f /tmp/khaos/pids/*.pid 2>/dev/null || true
+
+echo "KHAOS stopped."
