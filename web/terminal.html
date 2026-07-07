@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>KHAOS Terminal</title>
+  <style>
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body {
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      background: #0a0a0a;
+      color: #00ff88;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    .bar {
+      height: 36px;
+      background: #111;
+      border-bottom: 1px solid #222;
+      display: flex;
+      align-items: center;
+      padding: 0 12px;
+      font-size: 12px;
+      gap: 12px;
+    }
+    .bar-title { color: #888; }
+    .bar-dot { width: 8px; height: 8px; border-radius: 50%; background: #00ff88; }
+    .terminal {
+      flex: 1;
+      padding: 12px;
+      overflow-y: auto;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    .prompt { color: #48dbfb; }
+    .output { color: #ccc; }
+    .error { color: #ff6b6b; }
+    .input-line {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 4px;
+    }
+    .input-line input {
+      flex: 1;
+      background: transparent;
+      border: none;
+      color: #00ff88;
+      font-family: inherit;
+      font-size: 13px;
+      outline: none;
+    }
+  </style>
+</head>
+<body>
+  <div class="bar">
+    <div class="bar-dot"></div>
+    <span class="bar-title">KHAOS Terminal</span>
+    <span style="color:#555;margin-left:auto">web terminal — exec via daemon</span>
+  </div>
+  <div class="terminal" id="terminal">
+    <div class="output">KHAOS Web Terminal v0.1</div>
+    <div class="output">Type commands below. Output streams from the host.</div>
+    <div class="output">---</div>
+    <div id="output"></div>
+    <div class="input-line">
+      <span class="prompt">$</span>
+      <input id="cmd" type="text" autofocus placeholder="type a command..." onkeydown="if(event.key==='Enter')sendCmd()">
+    </div>
+  </div>
+  <script>
+    const output = document.getElementById('output');
+    const cmdInput = document.getElementById('cmd');
+
+    async function sendCmd() {
+      const cmd = cmdInput.value.trim();
+      if (!cmd) return;
+      cmdInput.value = '';
+
+      // Show command
+      output.innerHTML += `<div><span class="prompt">$</span> <span class="output">${escHtml(cmd)}</span></div>`;
+
+      try {
+        const resp = await fetch('/api/exec', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({command: cmd})
+        });
+        const data = await resp.json();
+        if (data.stdout) {
+          data.stdout.split('\n').forEach(line => {
+            output.innerHTML += `<div class="output">${escHtml(line)}</div>`;
+          });
+        }
+        if (data.stderr) {
+          data.stderr.split('\n').forEach(line => {
+            output.innerHTML += `<div class="error">${escHtml(line)}</div>`;
+          });
+        }
+      } catch(e) {
+        output.innerHTML += `<div class="error">Error: ${escHtml(e.message)}</div>`;
+      }
+
+      terminal.scrollTop = terminal.scrollHeight;
+    }
+
+    function escHtml(s) {
+      return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+  </script>
+</body>
+</html>

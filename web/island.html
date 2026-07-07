@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>KHAOS Island</title>
+  <style>
+    :root {
+      --bg: #0a0a0a;
+      --bar-bg: rgba(20, 20, 30, 0.92);
+      --bar-border: rgba(255,255,255,0.08);
+      --accent: #00ff88;
+      --accent-dim: #00cc6a;
+      --warn: #feca57;
+      --danger: #ff6b6b;
+      --text: #e0e0e0;
+      --text-dim: #888;
+      --pill-bg: rgba(255,255,255,0.06);
+      --pill-hover: rgba(255,255,255,0.12);
+      --panel-bg: rgba(18, 18, 28, 0.96);
+      --panel-border: rgba(255,255,255,0.1);
+      --radius: 20px;
+      --radius-sm: 12px;
+    }
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body {
+      font-family: -apple-system, 'SF Pro Display', 'Inter', 'Segoe UI', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      height: 100vh;
+      overflow: hidden;
+      user-select: none;
+    }
+
+    /* ===== TOP BAR ===== */
+    .topbar {
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      height: 44px;
+      background: var(--bar-bg);
+      backdrop-filter: blur(30px) saturate(1.5);
+      -webkit-backdrop-filter: blur(30px) saturate(1.5);
+      border-bottom: 1px solid var(--bar-border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 16px;
+      z-index: 1000;
+    }
+    .topbar-left { display: flex; align-items: center; gap: 12px; }
+    .topbar-right { display: flex; align-items: center; gap: 8px; }
+
+    /* Island pill (the main trigger) */
+    .island-pill {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 14px;
+      background: var(--pill-bg);
+      border: 1px solid var(--bar-border);
+      border-radius: var(--radius);
+      cursor: pointer;
+      transition: all 0.2s ease;
+      height: 32px;
+    }
+    .island-pill:hover { background: var(--pill-hover); }
+    .island-pill.active { background: rgba(0,255,136,0.1); border-color: rgba(0,255,136,0.3); }
+
+    .island-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 6px rgba(0,255,136,0.4);
+      animation: pulse 2s infinite;
+    }
+    .island-dot.idle { background: var(--warn); box-shadow: 0 0 6px rgba(254,202,87,0.4); }
+    .island-dot.off { background: var(--text-dim); box-shadow: none; animation: none; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.6} }
+
+    .island-label {
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0.3px;
+    }
+    .island-count {
+      font-size: 11px;
+      color: var(--text-dim);
+      background: rgba(255,255,255,0.08);
+      padding: 1px 7px;
+      border-radius: 10px;
+    }
+
+    /* Agent pills in bar */
+    .agent-pill {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      background: var(--pill-bg);
+      border: 1px solid transparent;
+      border-radius: 16px;
+      font-size: 12px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .agent-pill:hover { background: var(--pill-hover); border-color: var(--bar-border); }
+    .agent-pill .dot {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: var(--accent);
+    }
+    .agent-pill .dot.idle { background: var(--warn); }
+
+    /* Top bar buttons */
+    .bar-btn {
+      width: 32px; height: 32px;
+      display: flex; align-items: center; justify-content: center;
+      background: var(--pill-bg);
+      border: 1px solid transparent;
+      border-radius: 10px;
+      cursor: pointer;
+      font-size: 16px;
+      transition: all 0.15s;
+    }
+    .bar-btn:hover { background: var(--pill-hover); border-color: var(--bar-border); }
+
+    /* ===== EXPANDED PANEL ===== */
+    .panel-overlay {
+      position: fixed;
+      top: 44px; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.4);
+      z-index: 999;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s;
+    }
+    .panel-overlay.open { opacity: 1; pointer-events: all; }
+
+    .panel {
+      position: fixed;
+      top: 52px;
+      left: 50%;
+      transform: translateX(-50%) translateY(-8px);
+      width: 420px;
+      max-height: calc(100vh - 80px);
+      background: var(--panel-bg);
+      backdrop-filter: blur(40px) saturate(1.8);
+      -webkit-backdrop-filter: blur(40px) saturate(1.8);
+      border: 1px solid var(--panel-border);
+      border-radius: 16px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.5), 0 0 1px rgba(255,255,255,0.1);
+      z-index: 1001;
+      opacity: 0;
+      pointer-events: none;
+      transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+      overflow: hidden;
+    }
+    .panel.open {
+      opacity: 1;
+      pointer-events: all;
+      transform: translateX(-50%) translateY(0);
+    }
+
+    .panel-header {
+      padding: 16px 20px 12px;
+      border-bottom: 1px solid var(--panel-border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .panel-title {
+      font-size: 15px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .panel-badge {
+      font-size: 11px;
+      padding: 2px 8px;
+      background: rgba(0,255,136,0.15);
+      color: var(--accent);
+      border-radius: 8px;
+      font-weight: 600;
+    }
+
+    .panel-section {
+      padding: 12px 20px;
+    }
+    .panel-section + .panel-section {
+      border-top: 1px solid var(--panel-border);
+    }
+    .section-label {
+      font-size: 11px;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-bottom: 10px;
+      font-weight: 600;
+    }
+
+    /* Session cards */
+    .session-card {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 12px;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.05);
+      border-radius: var(--radius-sm);
+      margin-bottom: 8px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .session-card:hover {
+      background: rgba(255,255,255,0.06);
+      border-color: rgba(255,255,255,0.1);
+    }
+    .session-card:last-child { margin-bottom: 0; }
+    .session-info { flex: 1; }
+    .session-agent {
+      font-size: 13px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .session-agent .icon {
+      width: 18px; height: 18px;
+      border-radius: 5px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 10px;
+      font-weight: 700;
+    }
+    .session-agent .icon.claude { background: #d4a574; color: #000; }
+    .session-agent .icon.codex { background: #10b981; color: #fff; }
+    .session-agent .icon.opencode { background: #6366f1; color: #fff; }
+    .session-agent .icon.gemini { background: #3b82f6; color: #fff; }
+    .session-agent .icon.cursor { background: #8b5cf6; color: #fff; }
+    .session-meta {
+      font-size: 11px;
+      color: var(--text-dim);
+      margin-top: 3px;
+    }
+    .session-state {
+      font-size: 11px;
+      padding: 3px 10px;
+      border-radius: 10px;
+      font-weight: 600;
+    }
+    .state-running { background: rgba(0,255,136,0.12); color: var(--accent); }
+    .state-idle { background: rgba(254,202,87,0.12); color: var(--warn); }
+    .state-blocked { background: rgba(255,107,107,0.12); color: var(--danger); }
+
+    /* Quick actions */
+    .quick-actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+    .quick-btn {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 12px;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.05);
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      transition: all 0.15s;
+      font-size: 12px;
+      color: var(--text);
+    }
+    .quick-btn:hover { background: rgba(255,255,255,0.08); border-color: rgba(255,255,255,0.12); }
+    .quick-btn .qicon {
+      width: 28px; height: 28px;
+      border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 14px;
+      background: rgba(255,255,255,0.06);
+    }
+
+    /* Events feed */
+    .event-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      padding: 8px 0;
+      font-size: 12px;
+      border-bottom: 1px solid rgba(255,255,255,0.03);
+    }
+    .event-item:last-child { border-bottom: none; }
+    .event-dot {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      margin-top: 5px;
+      flex-shrink: 0;
+    }
+    .event-text { color: var(--text-dim); }
+    .event-text strong { color: var(--text); }
+    .event-time { color: var(--text-dim); font-size: 10px; margin-left: auto; flex-shrink: 0; }
+
+    .empty-msg {
+      text-align: center;
+      color: var(--text-dim);
+      padding: 20px;
+      font-size: 13px;
+      font-style: italic;
+    }
+
+    /* ===== DESKTOP BACKGROUND ===== */
+    .desktop {
+      position: fixed;
+      top: 44px; left: 0; right: 0; bottom: 0;
+      background: linear-gradient(135deg, #0f0f1a 0%, #1a1a2e 50%, #16213e 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .desktop-watermark {
+      font-size: 72px;
+      opacity: 0.03;
+      font-weight: 900;
+      letter-spacing: 20px;
+    }
+  </style>
+</head>
+<body>
+  <!-- Top Bar -->
+  <div class="topbar">
+    <div class="topbar-left">
+      <div class="island-pill" id="islandPill" onclick="togglePanel()">
+        <div class="island-dot" id="islandDot"></div>
+        <span class="island-label">KHAOS</span>
+        <span class="island-count" id="agentCount">0</span>
+      </div>
+      <div id="agentPills"></div>
+    </div>
+    <div class="topbar-right">
+      <div class="bar-btn" onclick="openTerminal()" title="Open Terminal">⌨</div>
+      <div class="bar-btn" onclick="location.reload()" title="Refresh">↻</div>
+      <div class="bar-btn" onclick="togglePanel()" title="Dashboard">☰</div>
+    </div>
+  </div>
+
+  <!-- Panel Overlay -->
+  <div class="panel-overlay" id="panelOverlay" onclick="closePanel()"></div>
+
+  <!-- Expanded Panel -->
+  <div class="panel" id="panel">
+    <div class="panel-header">
+      <div class="panel-title">
+        ⚡ KHAOS Island
+        <span class="panel-badge" id="panelBadge">LIVE</span>
+      </div>
+      <span style="font-size:12px;color:var(--text-dim)" id="panelTime"></span>
+    </div>
+
+    <div class="panel-section">
+      <div class="section-label">Active Agents</div>
+      <div id="sessionList">
+        <div class="empty-msg">Scanning for agents...</div>
+      </div>
+    </div>
+
+    <div class="panel-section">
+      <div class="section-label">Quick Actions</div>
+      <div class="quick-actions">
+        <div class="quick-btn" onclick="openTerminal()">
+          <div class="qicon">⌨</div>
+          <div><strong>Terminal</strong><br><span style="color:var(--text-dim);font-size:11px">Open new shell</span></div>
+        </div>
+        <div class="quick-btn" onclick="openVNC()">
+          <div class="qicon">🖥</div>
+          <div><strong>Desktop</strong><br><span style="color:var(--text-dim);font-size:11px">Full remote access</span></div>
+        </div>
+        <div class="quick-btn" onclick="openDashboard()">
+          <div class="qicon">📊</div>
+          <div><strong>Dashboard</strong><br><span style="color:var(--text-dim);font-size:11px">Agent analytics</span></div>
+        </div>
+        <div class="quick-btn" onclick="openMCP()">
+          <div class="qicon">🔌</div>
+          <div><strong>MCP Bridge</strong><br><span style="color:var(--text-dim);font-size:11px">Connect agents</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel-section">
+      <div class="section-label">Recent Events</div>
+      <div id="eventFeed">
+        <div class="empty-msg">No events yet</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Desktop -->
+  <div class="desktop">
+    <div class="desktop-watermark">KHAOS</div>
+  </div>
+
+  <script>
+    let panelOpen = false;
+    let agents = {};
+    let events = [];
+
+    function togglePanel() {
+      panelOpen = !panelOpen;
+      document.getElementById('panel').classList.toggle('open', panelOpen);
+      document.getElementById('panelOverlay').classList.toggle('open', panelOpen);
+      document.getElementById('islandPill').classList.toggle('active', panelOpen);
+    }
+    function closePanel() {
+      panelOpen = false;
+      document.getElementById('panel').classList.remove('open');
+      document.getElementById('panelOverlay').classList.remove('open');
+      document.getElementById('islandPill').classList.remove('active');
+    }
+
+    function openTerminal() {
+      // xterm.js or link to terminal web app
+      window.open('/terminal', '_blank');
+    }
+    function openVNC() {
+      window.open('/vnc.html', '_blank');
+    }
+    function openDashboard() {
+      window.open('/dashboard', '_blank');
+    }
+    function openMCP() {
+      alert('MCP Bridge: Connect your agent via unix socket /tmp/khaos/khaos.sock');
+    }
+
+    function agentIcon(agent) {
+      const icons = { claude:'C', codex:'X', opencode:'O', gemini:'G', cursor:'↗' };
+      return icons[agent] || '?';
+    }
+
+    async function poll() {
+      try {
+        const resp = await fetch('/api/status');
+        const data = await resp.json();
+        agents = data.agents || {};
+
+        // Update island dot
+        const count = Object.keys(agents).length;
+        const dot = document.getElementById('islandDot');
+        dot.className = 'island-dot' + (count === 0 ? ' off' : '');
+
+        // Update count
+        document.getElementById('agentCount').textContent = count;
+        document.getElementById('panelBadge').textContent = count > 0 ? `${count} ACTIVE` : 'SCANNING';
+
+        // Update agent pills in bar
+        const pillsHtml = Object.entries(agents).map(([k, s]) =>
+          `<div class="agent-pill" onclick="togglePanel()">
+            <div class="dot${s.state !== 'running' ? ' idle' : ''}"></div>
+            ${s.agent}
+          </div>`
+        ).join('');
+        document.getElementById('agentPills').innerHTML = pillsHtml;
+
+        // Update session list
+        if (count === 0) {
+          document.getElementById('sessionList').innerHTML = '<div class="empty-msg">No agents detected — waiting for activity</div>';
+        } else {
+          document.getElementById('sessionList').innerHTML = Object.entries(agents).map(([k, s]) => `
+            <div class="session-card" onclick="openTerminal()">
+              <div class="session-info">
+                <div class="session-agent">
+                  <span class="icon ${s.agent}">${agentIcon(s.agent)}</span>
+                  ${s.agent}
+                </div>
+                <div class="session-meta">PID ${s.pid} · ${s.cwd || 'unknown'}</div>
+              </div>
+              <span class="session-state state-${s.state}">${s.state}</span>
+            </div>
+          `).join('');
+        }
+
+        // Update time
+        document.getElementById('panelTime').textContent = new Date().toLocaleTimeString();
+      } catch(e) {
+        document.getElementById('islandDot').className = 'island-dot off';
+        document.getElementById('agentCount').textContent = '!';
+      }
+    }
+
+    // Keyboard shortcut: Escape closes panel
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Escape' && panelOpen) closePanel();
+    });
+
+    poll();
+    setInterval(poll, 2000);
+  </script>
+</body>
+</html>
